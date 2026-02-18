@@ -121,15 +121,14 @@ def home():
     return success_response({
         "message": "QATest API",
         "version": "1.0.0",
-        "description": "API для работы со списком пользователей",
-        "endpoints": {
-            "GET /reset": "Сброс базы данных к начальному состоянию",
-            "GET /index?offset=0&count=10": "Получение списка пользователей с пагинацией",
-            "GET /get?id=1": "Получение пользователя по ID"
+        "documentation": {
+            "openapi": "/openapi.yaml",
         },
-        "openapi_spec": "/openapi.yaml",
-        "current_users": len(users_db),
-        "users": users_db if len(users_db) <= 5 else f"{len(users_db)} users available"
+        "endpoints": {
+            "/reset": "Reset database to initial state",
+            "/index?offset=0&count=10": "List users with pagination",
+            "/get?id=1": "Get user by id"
+        }
     })
 
 if __name__ == '__main__':
