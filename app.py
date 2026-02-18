@@ -5,13 +5,18 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Исходные данные пользователей
+# Исходные данные пользователей с правильными ID (начиная с 1)
 INITIAL_USERS = [
-    {"id": "1", "name": "Alice Smith"},
-    {"id": "2", "name": "John Doe"},
-    {"id": "3", "name": "Buffalo Bill"},
-    {"id": "4", "name": "Charlie Brown"},
-    {"id": "5", "name": "Diana Prince"}
+    {"id": "1", "name": "David Bush"},
+    {"id": "2", "name": "Mikka Heep"},
+    {"id": "3", "name": "Hannah Oberty"},
+    {"id": "4", "name": "Petula Jackson"},
+    {"id": "5", "name": "Clark Peterson"},
+    {"id": "6", "name": "Betty Williamson"},
+    {"id": "7", "name": "John Doe"},
+    {"id": "8", "name": "John \"Fireman\" Smith"},
+    {"id": "9", "name": "Harrison Ford"},
+    {"id": "10", "name": "Bob Dowson"}
 ]
 
 # Хранилище данных
@@ -31,97 +36,111 @@ def error_response(description):
 
 @app.route('/reset', methods=['GET', 'POST'])
 def reset():
+    """Инициализирует базу пользователей начальным набором данных"""
     global users_db
-    users_db = INITIAL_USERS.copy()
+    users_db = [user.copy() for user in INITIAL_USERS]  # Создаем копии, чтобы не изменять оригинал
     return success_response()
 
 @app.route('/index', methods=['GET'])
 def index():
+    """Возвращает упорядоченный по id список пользователей"""
     try:
-        offset = int(request.args.get('offset', 0))
+        # Получаем параметры
+        offset = request.args.get('offset', '0')
         count = request.args.get('count')
         
-        if offset < 0:
-            return error_response("Offset must be non-negative")
+        # Валидация offset
+        try:
+            offset = int(offset)
+        except ValueError:
+            return error_response("Invalid offset parameter")
         
+        if offset < 0:
+            return success_response([])  # По спецификации: при отрицательном offset возвращаем пустой результат
+        
+        # Валидация count если он есть
+        if count is not None:
+            try:
+                count = int(count)
+            except ValueError:
+                return error_response("Invalid count parameter")
+            
+            if count < 0:
+                return success_response([])  # По спецификации: при отрицательном count возвращаем пустой результат
+        else:
+            count = None
+        
+        # Сортируем пользователей по id (как строки, для консистентности)
         sorted_users = sorted(users_db, key=lambda x: x['id'])
         
+        # Применяем пагинацию
+        if offset >= len(sorted_users):
+            return success_response([])
+        
         if count is not None:
-            count = int(count)
-            if count < 0:
-                return error_response("Count must be non-negative")
-            result = sorted_users[offset:offset + count]
+            # Специфичное поведение: при count=0 возвращаем одного пользователя начиная с offset
+            if count == 0:
+                result = sorted_users[offset:offset + 1]
+            else:
+                result = sorted_users[offset:offset + count]
         else:
             result = sorted_users[offset:]
         
         return success_response(result)
-    except ValueError:
-        return error_response("Invalid offset or count parameter")
+        
     except Exception as e:
         return error_response(str(e))
 
 @app.route('/get', methods=['GET'])
 def get_user():
+    """Возвращает информацию о пользователе с идентификатором ID"""
     try:
         user_id = request.args.get('id')
         if not user_id:
             return error_response("Missing id parameter")
         
-        user = next((u for u in users_db if u['id'] == user_id), None)
+        # Ищем пользователя (сравниваем как строки)
+        user = next((u for u in users_db if u['id'] == str(user_id)), None)
+        
         if user:
             return success_response(user)
         else:
             return error_response(f"User with id {user_id} not found")
+            
     except Exception as e:
         return error_response(str(e))
 
-# Маршрут для OpenAPI спецификации
+# Маршрут для OpenAPI спецификации (оставляем, так как файл существует)
 @app.route('/openapi.yaml')
 def openapi_spec():
     """Отдает OpenAPI спецификацию"""
     return send_from_directory('.', 'openapi.yaml')
-
-# Маршрут для Swagger UI
-@app.route('/swagger.html')
-def swagger_ui():
-    """Отдает Swagger UI интерфейс"""
-    return send_from_directory('.', 'swagger.html')
-
-# Маршрут для документации (короткая ссылка)
-@app.route('/docs')
-@app.route('/documentation')
-def documentation():
-    """Редирект на Swagger UI"""
-    return swagger_ui()
 
 @app.route('/', methods=['GET'])
 def home():
     return success_response({
         "message": "QATest API",
         "version": "1.0.0",
-        "documentation": {
-            "swagger": "/swagger.html",
-            "openapi": "/openapi.yaml",
-            "docs": "/docs"
-        },
+        "description": "API для работы со списком пользователей",
         "endpoints": {
-            "/reset": "Reset database to initial state",
-            "/index?offset=0&count=10": "List users with pagination",
-            "/get?id=1": "Get user by id"
+            "GET /reset": "Сброс базы данных к начальному состоянию",
+            "GET /index?offset=0&count=10": "Получение списка пользователей с пагинацией",
+            "GET /get?id=1": "Получение пользователя по ID"
         },
-        "users_count": len(users_db)
+        "openapi_spec": "/openapi.yaml",
+        "current_users": len(users_db),
+        "users": users_db if len(users_db) <= 5 else f"{len(users_db)} users available"
     })
-
-# Обработчик для статических файлов (если понадобятся дополнительные)
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    """Отдает статические файлы из папки static"""
-    return send_from_directory('static', filename)
 
 if __name__ == '__main__':
     # Инициализация базы при запуске
-    users_db = INITIAL_USERS.copy()
+    users_db = [user.copy() for user in INITIAL_USERS]
     print("🚀 QATest API запущен!")
-    print("📚 Документация: http://127.0.0.1:5000/docs")
-    print("🔗 OpenAPI: http://127.0.0.1:5000/openapi.yaml")
+    print(f"📊 Загружено {len(users_db)} пользователей")
+    print("🔗 OpenAPI спецификация: http://127.0.0.1:5000/openapi.yaml")
+    print("\n📌 Доступные эндпоинты:")
+    print("   GET  /reset")
+    print("   GET  /index?offset=0&count=10")
+    print("   GET  /get?id=1")
+    print("   GET  /")
     app.run(debug=True, host='0.0.0.0', port=5000)
