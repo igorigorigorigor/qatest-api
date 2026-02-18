@@ -1,0 +1,299 @@
+openapi: 3.0.0
+info:
+  title: QATest API
+  description: HTTP API для работы со списками пользователей
+  version: 1.0.0
+  contact:
+    name: API Support
+  license:
+    name: MIT
+
+servers:
+  - url: https://qatest-api.onrender.com
+    description: Production server
+  - url: http://localhost:5000
+    description: Local development server
+
+tags:
+  - name: Users
+    description: Операции с пользователями
+  - name: System
+    description: Системные операции
+
+components:
+  schemas:
+    User:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          description: Уникальный идентификатор пользователя
+          example: "2"
+        name:
+          type: string
+          description: Имя пользователя
+          example: "John Doe"
+    
+    UserList:
+      type: array
+      items:
+        $ref: '#/components/schemas/User'
+    
+    SuccessResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [OK]
+          description: Статус успешного выполнения
+          example: "OK"
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/User'
+            - $ref: '#/components/schemas/UserList'
+            - type: object
+          description: Результат операции (может отсутствовать)
+    
+    ErrorResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [error]
+          description: Статус ошибки
+          example: "error"
+        description:
+          type: string
+          description: Описание ошибки
+          example: "User with id 999 not found"
+    
+    IndexParams:
+      type: object
+      properties:
+        offset:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Смещение от начала списка
+          example: 1
+        count:
+          type: integer
+          minimum: 1
+          description: Количество записей для возврата
+          example: 2
+    
+    GetParams:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          description: Идентификатор пользователя
+          example: "2"
+
+  responses:
+    Success:
+      description: Успешное выполнение операции
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SuccessResponse'
+    
+    Error:
+      description: Ошибка при выполнении операции
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: "error"
+            description: "Invalid offset parameter"
+
+paths:
+  /reset:
+    get:
+      tags:
+        - System
+      summary: Сброс базы данных
+      description: Инициализирует базу пользователей начальным набором данных
+      operationId: resetDatabase
+      responses:
+        '200':
+          description: База данных успешно сброшена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                status: "OK"
+    
+    post:
+      tags:
+        - System
+      summary: Сброс базы данных (альтернативный метод)
+      description: Инициализирует базу пользователей начальным набором данных
+      operationId: resetDatabasePost
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /index:
+    get:
+      tags:
+        - Users
+      summary: Получение списка пользователей
+      description: Возвращает упорядоченный по id список пользователей
+      operationId: getUsers
+      parameters:
+        - name: offset
+          in: query
+          description: Смещение от начала списка
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 1
+        - name: count
+          in: query
+          description: Количество записей для возврата
+          schema:
+            type: integer
+            minimum: 1
+          example: 2
+      responses:
+        '200':
+          description: Успешное получение списка пользователей
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      result:
+                        $ref: '#/components/schemas/UserList'
+              examples:
+                default:
+                  value:
+                    status: "OK"
+                    result: [
+                      {"id": "2", "name": "John Doe"},
+                      {"id": "3", "name": "Buffalo Bill"}
+                    ]
+                empty:
+                  value:
+                    status: "OK"
+                    result: []
+        '200_with_error':
+          description: Ошибка в параметрах запроса (возвращается с HTTP 200)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "error"
+                description: "Offset must be non-negative"
+
+  /get:
+    get:
+      tags:
+        - Users
+      summary: Получение пользователя по ID
+      description: Возвращает информацию о пользователе с указанным идентификатором
+      operationId: getUserById
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Идентификатор пользователя
+          schema:
+            type: string
+          example: "2"
+      responses:
+        '200':
+          description: Успешное получение пользователя
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      result:
+                        $ref: '#/components/schemas/User'
+              example:
+                status: "OK"
+                result: {"id": "2", "name": "John Doe"}
+        '200_user_not_found':
+          description: Пользователь не найден (возвращается с HTTP 200)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "error"
+                description: "User with id 999 not found"
+        '200_missing_id':
+          description: Отсутствует параметр id (возвращается с HTTP 200)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "error"
+                description: "Missing id parameter"
+
+  /:
+    get:
+      tags:
+        - System
+      summary: Информация об API
+      description: Возвращает информацию о доступных эндпоинтах
+      operationId: getApiInfo
+      responses:
+        '200':
+          description: Информация об API
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "QATest API"
+                          endpoints:
+                            type: object
+                            properties:
+                              /reset:
+                                type: string
+                                example: "Reset database"
+                              /index:
+                                type: string
+                                example: "List users with pagination"
+                              /get:
+                                type: string
+                                example: "Get user by id"
+              example:
+                status: "OK"
+                result:
+                  message: "QATest API"
+                  endpoints:
+                    "/reset": "Reset database"
+                    "/index?offset=0&count=10": "List users"
+                    "/get?id=1": "Get user by id"
+
+x-webhooks:
+  - description: Webhooks не поддерживаются
