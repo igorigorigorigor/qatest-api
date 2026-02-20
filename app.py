@@ -88,16 +88,14 @@ def home():
     return success_response(
         {
             "name": "QATest API",
-            "version": "2.0.0",
+            "version": "1.0.0",
             "description": "HTTP API for user management",
             "endpoints": {
-                "GET /": "Service information",
-                "POST /reset": "Reset database to initial state",
-                "GET /users": "Get paginated list of users (parameters: offset, count)",
-                "POST /users": "Create new user (JSON: msisdn, name - optional)",
+                "POST /users": "Create new user",
+                "GET /users": "Get paginated list of users",                
                 "GET /users/{id}": "Get user by ID",
                 "DELETE /users/{id}": "Delete user by ID",
-                "GET /openapi.yaml": "OpenAPI specification",
+                "POST /reset": "Reset database to initial state"
             },
             "documentation": "/openapi.yaml",
             "users_count": len(users_db),
