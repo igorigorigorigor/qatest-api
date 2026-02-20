@@ -50,6 +50,7 @@ def validate_name(name):
 
     name = name.strip()
     # БАГ: используется >= вместо > (допускает имена длиной 31 символ)
+    # и что еще хуже - считает ошибкой имена длиной 30 символов!
     if name and len(name) >= MAX_NAME_LENGTH:
         return False, f"Name must not exceed {MAX_NAME_LENGTH} characters"
 
@@ -78,6 +79,30 @@ def validate_msisdn(msisdn):
 def is_msisdn_unique(msisdn):
     """Проверяет уникальность MSISDN"""
     return not any(user["msisdn"] == msisdn for user in users_db)
+
+
+# ========== КОРНЕВОЙ ЭНДПОИНТ (описание сервиса) ==========
+@app.route("/", methods=["GET"])
+def home():
+    """GET / - возвращает информацию о сервисе"""
+    return success_response(
+        {
+            "name": "QATest API",
+            "version": "2.0.0",
+            "description": "HTTP API для работы со списками пользователей",
+            "endpoints": {
+                "GET /": "Информация о сервисе",
+                "POST /reset": "Сброс базы данных к начальному состоянию",
+                "GET /users": "Получение списка пользователей с пагинацией (параметры: offset, count)",
+                "POST /users": "Создание нового пользователя (JSON: msisdn, name - опционально)",
+                "GET /users/{id}": "Получение пользователя по ID",
+                "DELETE /users/{id}": "Удаление пользователя по ID",
+                "GET /openapi.yaml": "OpenAPI спецификация",
+            },
+            "documentation": "/openapi.yaml",
+            "users_count": len(users_db),
+        }
+    )
 
 
 # ========== БАГ 3: Попарное тестирование (Pairwise Testing) ==========
@@ -155,7 +180,9 @@ def create_user():
         extra_fields = received_fields - allowed_fields
 
         if extra_fields:
-            return error_response(f"Extra fields not allowed: {', '.join(extra_fields)}")
+            return error_response(
+                f"Extra fields not allowed: {', '.join(extra_fields)}"
+            )
 
         # Проверяем обязательное поле msisdn
         if "msisdn" not in data:
@@ -252,6 +279,7 @@ if __name__ == "__main__":
     print("🚀 QATest API (версия с багами) запущен!")
     print(f"📊 Загружено {len(users_db)} пользователей")
     print("\n📌 Доступные эндпоинты:")
+    print("   GET  /")
     print("   POST /reset")
     print("   GET  /users?offset=0&count=10")
     print("   POST /users (JSON: msisdn, name - опционально)")
