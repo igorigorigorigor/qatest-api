@@ -2,7 +2,7 @@ openapi: 3.0.0
 info:
   title: QATest API
   description: HTTP API для работы со списками пользователей
-  version: 1.0.0
+  version: 5.0.0
   contact:
     name: API Support
   license:
@@ -26,16 +26,41 @@ components:
       type: object
       required:
         - id
-        - name
+        - msisdn
       properties:
         id:
-          type: string
-          description: Уникальный идентификатор пользователя
-          example: "2"
+          type: integer
+          description: Уникальный идентификатор пользователя (генерируется сервером)
+          example: 11
         name:
           type: string
-          description: Имя пользователя
-          example: "John Doe"
+          description: Имя пользователя (опционально, максимум 30 символов)
+          maxLength: 30
+          example: "Jane Smith"
+          nullable: true
+        msisdn:
+          type: string
+          description: Номер телефона в формате MSISDN (обязательное поле, ровно 11 цифр)
+          pattern: '^\d{11}$'
+          example: "79161234567"
+    
+    UserInput:
+      type: object
+      required:
+        - msisdn
+      properties:
+        name:
+          type: string
+          description: Имя пользователя (опционально, максимум 30 символов)
+          maxLength: 30
+          example: "Jane Smith"
+          nullable: true
+        msisdn:
+          type: string
+          description: Номер телефона в формате MSISDN (обязательное поле, ровно 11 цифр)
+          pattern: '^\d{11}$'
+          example: "79161234567"
+      additionalProperties: false
     
     UserList:
       type: array
@@ -57,7 +82,7 @@ components:
             - $ref: '#/components/schemas/User'
             - $ref: '#/components/schemas/UserList'
             - type: object
-          description: Результат операции (может отсутствовать)
+          description: Результат операции
     
     ErrorResponse:
       type: object
@@ -74,52 +99,75 @@ components:
           description: Описание ошибки
           example: "User with id 999 not found"
     
-    IndexParams:
-      type: object
-      properties:
-        offset:
-          type: integer
-          minimum: 0
-          default: 0
-          description: Смещение от начала списка
-          example: 1
-        count:
-          type: integer
-          minimum: 1
-          description: Количество записей для возврата
-          example: 2
-    
-    GetParams:
+    CreateUserResponse:
       type: object
       required:
-        - id
+        - status
+        - result
       properties:
-        id:
+        status:
           type: string
-          description: Идентификатор пользователя
-          example: "2"
+          enum: [OK]
+          example: "OK"
+        result:
+          type: object
+          required:
+            - id
+            - msisdn
+            - message
+          properties:
+            id:
+              type: integer
+              description: ID созданного пользователя (сгенерирован сервером)
+              example: 11
+            name:
+              type: string
+              description: Имя созданного пользователя (может быть null)
+              maxLength: 30
+              example: "Jane Smith"
+              nullable: true
+            msisdn:
+              type: string
+              description: Номер телефона созданного пользователя
+              pattern: '^\d{11}$'
+              example: "79161234567"
+            message:
+              type: string
+              description: Подтверждение создания
+              example: "User created successfully"
 
-  responses:
-    Success:
-      description: Успешное выполнение операции
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/SuccessResponse'
+  parameters:
+    OffsetParam:
+      name: offset
+      in: query
+      description: Смещение от начала списка
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+      example: 1
     
-    Error:
-      description: Ошибка при выполнении операции
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            status: "error"
-            description: "Invalid offset parameter"
+    CountParam:
+      name: count
+      in: query
+      description: Количество записей для возврата
+      schema:
+        type: integer
+        minimum: 1
+      example: 2
+    
+    UserIdParam:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор пользователя
+      schema:
+        type: integer
+      example: 7
 
 paths:
   /reset:
-    get:
+    post:
       tags:
         - System
       summary: Сброс базы данных
@@ -134,18 +182,8 @@ paths:
                 $ref: '#/components/schemas/SuccessResponse'
               example:
                 status: "OK"
-    
-    post:
-      tags:
-        - System
-      summary: Сброс базы данных (альтернативный метод)
-      description: Инициализирует базу пользователей начальным набором данных
-      operationId: resetDatabasePost
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
 
-  /index:
+  /users:
     get:
       tags:
         - Users
@@ -153,21 +191,8 @@ paths:
       description: Возвращает упорядоченный по id список пользователей
       operationId: getUsers
       parameters:
-        - name: offset
-          in: query
-          description: Смещение от начала списка
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
-          example: 1
-        - name: count
-          in: query
-          description: Количество записей для возврата
-          schema:
-            type: integer
-            minimum: 1
-          example: 2
+        - $ref: '#/components/parameters/OffsetParam'
+        - $ref: '#/components/parameters/CountParam'
       responses:
         '200':
           description: Успешное получение списка пользователей
@@ -185,24 +210,99 @@ paths:
                   value:
                     status: "OK"
                     result: [
-                      {"id": "2", "name": "John Doe"},
-                      {"id": "3", "name": "Buffalo Bill"}
+                      {"id": 1, "name": "David Bush", "msisdn": "79161234001"},
+                      {"id": 2, "name": "Mikka Heep", "msisdn": "79161234002"},
+                      {"id": 3, "name": "Hannah Oberty", "msisdn": "79161234003"}
+                    ]
+                with_null_names:
+                  value:
+                    status: "OK"
+                    result: [
+                      {"id": 11, "name": null, "msisdn": "79161234567"},
+                      {"id": 12, "name": "Jane Smith", "msisdn": "79161234568"}
                     ]
                 empty:
                   value:
                     status: "OK"
                     result: []
-        '200_with_error':
-          description: Ошибка в параметрах запроса (возвращается с HTTP 200)
+
+    post:
+      tags:
+        - Users
+      summary: Создание нового пользователя
+      description: |
+        Добавляет нового пользователя в базу данных.
+        ID генерируется автоматически сервером (инкрементально).
+        
+        **Правила валидации:**
+        * msisdn: обязательное поле, ровно 11 цифр, уникальное
+        * name: опционально, максимум 30 символов
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+            examples:
+              with_name:
+                summary: С именем
+                value:
+                  name: "Jane Smith"
+                  msisdn: "79161234567"
+              without_name:
+                summary: Без имени
+                value:
+                  msisdn: "79161234568"
+      responses:
+        '200':
+          description: Пользователь успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateUserResponse'
+              examples:
+                with_name:
+                  value:
+                    status: "OK"
+                    result:
+                      id: 11
+                      name: "Jane Smith"
+                      msisdn: "79161234567"
+                      message: "User created successfully"
+                without_name:
+                  value:
+                    status: "OK"
+                    result:
+                      id: 12
+                      name: null
+                      msisdn: "79161234568"
+                      message: "User created successfully"
+        '200_error':
+          description: Ошибка при создании
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                status: "error"
-                description: "Offset must be non-negative"
+              examples:
+                missing_msisdn:
+                  value:
+                    status: "error"
+                    description: "Missing required field: msisdn"
+                name_too_long:
+                  value:
+                    status: "error"
+                    description: "Name must not exceed 30 characters"
+                invalid_msisdn_length:
+                  value:
+                    status: "error"
+                    description: "MSISDN must be exactly 11 digits"
+                duplicate_msisdn:
+                  value:
+                    status: "error"
+                    description: "User with msisdn 79161234567 already exists"
 
-  /get:
+  /users/{id}:
     get:
       tags:
         - Users
@@ -210,13 +310,7 @@ paths:
       description: Возвращает информацию о пользователе с указанным идентификатором
       operationId: getUserById
       parameters:
-        - name: id
-          in: query
-          required: true
-          description: Идентификатор пользователя
-          schema:
-            type: string
-          example: "2"
+        - $ref: '#/components/parameters/UserIdParam'
       responses:
         '200':
           description: Успешное получение пользователя
@@ -229,11 +323,25 @@ paths:
                     properties:
                       result:
                         $ref: '#/components/schemas/User'
-              example:
-                status: "OK"
-                result: {"id": "2", "name": "John Doe"}
-        '200_user_not_found':
-          description: Пользователь не найден (возвращается с HTTP 200)
+              examples:
+                found:
+                  value:
+                    status: "OK"
+                    result: {
+                      "id": 7, 
+                      "name": "John Doe",
+                      "msisdn": "79161234007"
+                    }
+                found_without_name:
+                  value:
+                    status: "OK"
+                    result: {
+                      "id": 11,
+                      "name": null,
+                      "msisdn": "79161234567"
+                    }
+        '200_not_found':
+          description: Пользователь не найден
           content:
             application/json:
               schema:
@@ -241,59 +349,32 @@ paths:
               example:
                 status: "error"
                 description: "User with id 999 not found"
-        '200_missing_id':
-          description: Отсутствует параметр id (возвращается с HTTP 200)
+
+    delete:
+      tags:
+        - Users
+      summary: Удаление пользователя
+      description: Удаляет пользователя по ID
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: Пользователь успешно удален
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                status: "OK"
+                result:
+                  message: "User with id 42 deleted successfully"
+        '200_not_found':
+          description: Пользователь не найден
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 status: "error"
-                description: "Missing id parameter"
-
-  /:
-    get:
-      tags:
-        - System
-      summary: Информация об API
-      description: Возвращает информацию о доступных эндпоинтах
-      operationId: getApiInfo
-      responses:
-        '200':
-          description: Информация об API
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      result:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "QATest API"
-                          endpoints:
-                            type: object
-                            properties:
-                              /reset:
-                                type: string
-                                example: "Reset database"
-                              /index:
-                                type: string
-                                example: "List users with pagination"
-                              /get:
-                                type: string
-                                example: "Get user by id"
-              example:
-                status: "OK"
-                result:
-                  message: "QATest API"
-                  endpoints:
-                    "/reset": "Reset database"
-                    "/index?offset=0&count=10": "List users"
-                    "/get?id=1": "Get user by id"
-
-x-webhooks:
-  - description: Webhooks не поддерживаются
+                description: "User with id 999 not found"
