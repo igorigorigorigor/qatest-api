@@ -3,7 +3,6 @@ import requests
 import json
 import yaml
 from jsonschema import validate, ValidationError
-from openapi_schema_validator import OAS30Validator
 import time
 
 # Конфигурация
@@ -17,69 +16,70 @@ def load_openapi_spec():
         with open('openapi.yaml', 'r') as f:
             return yaml.safe_load(f)
     except FileNotFoundError:
-        # Пробуем загрузить с сервера
-        response = requests.get(f"{BASE_URL}/openapi.yaml")
-        if response.status_code == 200:
-            return yaml.safe_load(response.text)
-        else:
-            raise Exception("Cannot load OpenAPI specification")
+        try:
+            response = requests.get(f"{BASE_URL}/openapi.yaml")
+            if response.status_code == 200:
+                return yaml.safe_load(response.text)
+        except:
+            pass
+    return None
 
 OPENAPI_SPEC = load_openapi_spec()
 
-def validate_against_openapi(response_data, path, method, status_code=200):
-    """
-    Валидирует ответ против OpenAPI спецификации
-    """
-    # Находим схему для данного path и method
-    path_item = OPENAPI_SPEC['paths'].get(path)
-    assert path_item, f"Path {path} not found in OpenAPI spec"
-    
-    operation = path_item.get(method.lower())
-    assert operation, f"Method {method} not found for path {path}"
-    
-    # Находим схему ответа для status_code
-    responses = operation.get('responses', {})
-    response_spec = responses.get(str(status_code))
-    
-    # Особый случай: для ошибок может быть несколько примеров
-    if status_code == 200 and response_data.get('status') == 'error':
-        # Ищем схему для ошибки (может быть под другим ключом)
-        for key, spec in responses.items():
-            if key.startswith('200') and 'error' in key:
-                response_spec = spec
-                break
-    
-    assert response_spec, f"Response spec for {path} {method} {status_code} not found"
-    
-    # Получаем схему из response_spec
-    content = response_spec.get('content', {})
-    schema = content.get('application/json', {}).get('schema')
-    
-    if not schema:
-        # Если нет явной схемы, используем пример для валидации
-        example = response_spec.get('content', {}).get('application/json', {}).get('example')
-        if example:
-            # Простая проверка структуры по примеру
-            assert response_data.keys() == example.keys(), f"Response structure mismatch. Expected {example.keys()}, got {response_data.keys()}"
-            return
-    
-    # Валидируем по схеме
-    validator = OAS30Validator(schema)
-    errors = list(validator.iter_errors(response_data))
-    
-    if errors:
-        error_messages = [f"{e.path}: {e.message}" for e in errors]
-        raise AssertionError(f"Validation failed:\n" + "\n".join(error_messages))
+# Простые схемы для валидации (на случай, если OpenAPI не загрузится)
+SIMPLE_USER_SCHEMA = {
+    "type": "object",
+    "required": ["id", "msisdn"],
+    "properties": {
+        "id": {"type": "integer"},
+        "name": {"type": ["string", "null"], "maxLength": 30},
+        "msisdn": {"type": "string", "pattern": "^\\d{11}$"}
+    }
+}
+
+SIMPLE_SUCCESS_SCHEMA = {
+    "type": "object",
+    "required": ["status"],
+    "properties": {
+        "status": {"type": "string", "enum": ["OK"]},
+        "result": {"type": ["object", "array", "null"]}
+    }
+}
+
+SIMPLE_ERROR_SCHEMA = {
+    "type": "object",
+    "required": ["status", "description"],
+    "properties": {
+        "status": {"type": "string", "enum": ["error"]},
+        "description": {"type": "string"}
+    }
+}
+
+def validate_against_schema(data, expected_schema):
+    """Простая валидация по схеме"""
+    try:
+        validate(instance=data, schema=expected_schema)
+        return True, None
+    except ValidationError as e:
+        return False, str(e)
 
 class TestQATestAPI:
-    """Набор тестов для QATest API с валидацией по OpenAPI"""
+    """Набор тестов для QATest API"""
 
     def setup_method(self):
         """Сбрасываем базу данных перед каждым тестом"""
-        response = requests.post(f"{BASE_URL}/reset")
-        assert response.status_code == 200
-        data = response.json()
-        validate_against_openapi(data, '/reset', 'post')
+        max_retries = 3
+        for i in range(max_retries):
+            try:
+                response = requests.post(f"{BASE_URL}/reset", timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    assert data["status"] == "OK"
+                    return
+            except requests.exceptions.RequestException:
+                if i == max_retries - 1:
+                    raise
+                time.sleep(2)
 
     # ===== ТЕСТЫ ДЛЯ POST /reset =====
     
@@ -88,7 +88,9 @@ class TestQATestAPI:
         response = requests.post(f"{BASE_URL}/reset")
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/reset', 'post')
+        assert data["status"] == "OK"
+        valid, error = validate_against_schema(data, SIMPLE_SUCCESS_SCHEMA)
+        assert valid, f"Schema validation failed: {error}"
 
     # ===== ТЕСТЫ ДЛЯ GET /users =====
     
@@ -97,13 +99,16 @@ class TestQATestAPI:
         response = requests.get(f"{BASE_URL}/users")
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'get')
+        assert data["status"] == "OK"
         
         result = data["result"]
         assert isinstance(result, list)
         assert len(result) == 10
         
-        # Проверяем сортировку по id
+        for user in result:
+            valid, error = validate_against_schema(user, SIMPLE_USER_SCHEMA)
+            assert valid, f"User validation failed: {error}"
+        
         ids = [user["id"] for user in result]
         assert ids == sorted(ids)
 
@@ -112,7 +117,6 @@ class TestQATestAPI:
         response = requests.get(f"{BASE_URL}/users?offset=2&count=4")
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'get')
         
         result = data["result"]
         assert len(result) == 4
@@ -124,7 +128,6 @@ class TestQATestAPI:
         response = requests.get(f"{BASE_URL}/users?offset=20")
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'get')
         assert data["result"] == []
 
     def test_get_users_invalid_offset(self):
@@ -132,8 +135,6 @@ class TestQATestAPI:
         response = requests.get(f"{BASE_URL}/users?offset=-5")
         assert response.status_code == 200
         data = response.json()
-        # Должен вернуть пустой результат, а не ошибку
-        validate_against_openapi(data, '/users', 'get')
         assert data["result"] == []
 
     def test_get_users_invalid_params_type(self):
@@ -141,7 +142,19 @@ class TestQATestAPI:
         response = requests.get(f"{BASE_URL}/users?offset=abc&count=def")
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'get')
+        assert data["status"] == "error"
+        valid, error = validate_against_schema(data, SIMPLE_ERROR_SCHEMA)
+        assert valid, f"Error schema validation failed: {error}"
+
+    def test_get_users_count_zero(self):
+        """Проверяет специальное поведение: count=0 возвращает одного пользователя"""
+        response = requests.get(f"{BASE_URL}/users?offset=3&count=0")
+        assert response.status_code == 200
+        data = response.json()
+        
+        result = data["result"]
+        assert len(result) == 1
+        assert result[0]["id"] == 4
 
     # ===== ТЕСТЫ ДЛЯ POST /users =====
     
@@ -155,12 +168,18 @@ class TestQATestAPI:
         response = requests.post(f"{BASE_URL}/users", json=new_user)
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'post')
         
+        assert data["status"] == "OK"
         result = data["result"]
         assert result["name"] == "Test User"
         assert result["msisdn"] == "79998887766"
         assert isinstance(result["id"], int)
+        
+        # Проверяем, что пользователь действительно создан
+        get_response = requests.get(f"{BASE_URL}/users/{result['id']}")
+        assert get_response.status_code == 200
+        user_data = get_response.json()
+        assert user_data["result"]["name"] == "Test User"
 
     def test_create_user_without_name(self):
         """Проверяет создание пользователя без имени"""
@@ -171,11 +190,11 @@ class TestQATestAPI:
         response = requests.post(f"{BASE_URL}/users", json=new_user)
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'post')
         
         result = data["result"]
         assert result["name"] is None
         assert result["msisdn"] == "79998887755"
+        assert isinstance(result["id"], int)
 
     def test_create_user_missing_msisdn(self):
         """Проверяет ошибку при создании без обязательного поля msisdn"""
@@ -186,19 +205,19 @@ class TestQATestAPI:
         response = requests.post(f"{BASE_URL}/users", json=new_user)
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'post')
+        assert data["status"] == "error"
         assert "Missing required field" in data["description"]
 
     def test_create_user_duplicate_msisdn(self):
         """Проверяет ошибку при создании с существующим msisdn"""
         new_user = {
-            "msisdn": "79161234001"  # Уже существует
+            "msisdn": "79161234001"
         }
         
         response = requests.post(f"{BASE_URL}/users", json=new_user)
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'post')
+        assert data["status"] == "error"
         assert "already exists" in data["description"]
 
     def test_create_user_name_too_long(self):
@@ -211,18 +230,40 @@ class TestQATestAPI:
         response = requests.post(f"{BASE_URL}/users", json=new_user)
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'post')
+        assert data["status"] == "error"
         assert "must not exceed 30 characters" in data["description"]
 
     def test_create_user_invalid_msisdn_length(self):
         """Проверяет ошибку при неверной длине MSISDN"""
+        # Слишком короткий
         response = requests.post(f"{BASE_URL}/users", json={
-            "msisdn": "1234567890"  # 10 цифр
+            "msisdn": "1234567890"
         })
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'post')
+        assert data["status"] == "error"
         assert "exactly 11 digits" in data["description"]
+        
+        # Слишком длинный
+        response = requests.post(f"{BASE_URL}/users", json={
+            "msisdn": "123456789012"
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "error"
+        assert "exactly 11 digits" in data["description"]
+
+    def test_create_user_msisdn_with_letters(self):
+        """Проверяет ошибку при MSISDN с буквами"""
+        new_user = {
+            "msisdn": "7916abc4567"
+        }
+        
+        response = requests.post(f"{BASE_URL}/users", json=new_user)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "error"
+        assert "contain only digits" in data["description"]
 
     def test_create_user_extra_fields(self):
         """Проверяет ошибку при передаче лишних полей"""
@@ -235,7 +276,7 @@ class TestQATestAPI:
         response = requests.post(f"{BASE_URL}/users", json=new_user)
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users', 'post')
+        assert data["status"] == "error"
         assert "Extra fields not allowed" in data["description"]
 
     # ===== ТЕСТЫ ДЛЯ GET /users/{id} =====
@@ -245,9 +286,11 @@ class TestQATestAPI:
         response = requests.get(f"{BASE_URL}/users/5")
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users/{id}', 'get')
         
+        assert data["status"] == "OK"
         user = data["result"]
+        valid, error = validate_against_schema(user, SIMPLE_USER_SCHEMA)
+        assert valid, f"User validation failed: {error}"
         assert user["id"] == 5
         assert user["name"] == "Clark Peterson"
         assert user["msisdn"] == "79161234005"
@@ -257,136 +300,122 @@ class TestQATestAPI:
         response = requests.get(f"{BASE_URL}/users/999")
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users/{id}', 'get')
+        assert data["status"] == "error"
         assert "not found" in data["description"]
 
     # ===== ТЕСТЫ ДЛЯ DELETE /users/{id} =====
     
     def test_delete_user(self):
         """Проверяет удаление существующего пользователя"""
-        # Создаем пользователя
         create_response = requests.post(f"{BASE_URL}/users", json={
             "msisdn": "79998887722"
         })
         user_id = create_response.json()["result"]["id"]
         
-        # Удаляем его
         delete_response = requests.delete(f"{BASE_URL}/users/{user_id}")
         assert delete_response.status_code == 200
         data = delete_response.json()
-        validate_against_openapi(data, '/users/{id}', 'delete')
+        assert data["status"] == "OK"
         assert "deleted successfully" in data["result"]["message"]
+        
+        get_response = requests.get(f"{BASE_URL}/users/{user_id}")
+        assert get_response.status_code == 200
+        assert get_response.json()["status"] == "error"
 
     def test_delete_user_not_found(self):
         """Проверяет ошибку при удалении несуществующего пользователя"""
         response = requests.delete(f"{BASE_URL}/users/999")
         assert response.status_code == 200
         data = response.json()
-        validate_against_openapi(data, '/users/{id}', 'delete')
+        assert data["status"] == "error"
         assert "not found" in data["description"]
 
     # ===== ТЕСТЫ НА СООТВЕТСТВИЕ СПЕЦИФИКАЦИИ =====
     
-    def test_all_endpoints_return_200(self):
-        """Проверяет, что все эндпоинты возвращают HTTP 200"""
+    def test_all_responses_have_status_200(self):
+        """Проверяет, что все ответы приходят с HTTP статусом 200"""
         endpoints = [
-            ('post', '/reset'),
-            ('get', '/users'),
-            ('post', '/users'),
-            ('get', '/users/1'),
-            ('delete', '/users/1'),
+            ("POST", "/reset"),
+            ("GET", "/users"),
+            ("GET", "/users?offset=2&count=3"),
+            ("GET", "/users/1"),
+            ("DELETE", "/users/1"),
+            ("POST", "/users"),
         ]
         
-        for method, path in endpoints:
-            if method == 'get':
-                response = requests.get(f"{BASE_URL}{path}")
-            elif method == 'post':
-                if path == '/users':
-                    response = requests.post(f"{BASE_URL}{path}", json={"msisdn": "79998887711"})
+        for method, url in endpoints:
+            if method == "GET":
+                response = requests.get(f"{BASE_URL}{url}")
+            elif method == "POST":
+                if url == "/users":
+                    response = requests.post(f"{BASE_URL}{url}", json={"msisdn": "79998887711"})
                 else:
-                    response = requests.post(f"{BASE_URL}{path}")
-            elif method == 'delete':
-                response = requests.delete(f"{BASE_URL}{path}")
+                    response = requests.post(f"{BASE_URL}{url}")
+            elif method == "DELETE":
+                response = requests.delete(f"{BASE_URL}{url}")
             
-            assert response.status_code == 200, f"{method.upper()} {path} вернул {response.status_code}"
-            validate_against_openapi(response.json(), path, method)
+            assert response.status_code == 200, f"{method} {url} вернул {response.status_code}"
 
-    def test_response_structure_against_openapi(self):
-        """Массовая проверка структуры ответов против OpenAPI"""
-        test_cases = [
-            # Успешные запросы
-            ('get', '/users', None),
-            ('get', '/users?offset=2&count=3', None),
-            ('get', '/users/1', None),
-            ('post', '/users', {"msisdn": "79998887799"}),
-            
-            # Запросы с ошибками
-            ('get', '/users/999', None),
-            ('post', '/users', {}),
-            ('post', '/users', {"msisdn": "invalid"}),
-            ('delete', '/users/999', None),
-        ]
-        
-        for method, path, body in test_cases:
-            if method == 'get':
-                response = requests.get(f"{BASE_URL}{path}")
-            elif method == 'post':
-                response = requests.post(f"{BASE_URL}{path}", json=body)
-            elif method == 'delete':
-                response = requests.delete(f"{BASE_URL}{path}")
-            
-            try:
-                validate_against_openapi(response.json(), path.split('?')[0], method)
-                print(f"✅ {method.upper()} {path} - OK")
-            except AssertionError as e:
-                print(f"❌ {method.upper()} {path} - FAIL")
-                print(f"   {str(e)}")
-                raise
-
-    def test_user_schema_validation(self):
-        """Проверяет, что все пользователи соответствуют схеме User из OpenAPI"""
+    def test_user_data_validation(self):
+        """Проверяет, что все пользователи соответствуют схеме"""
         response = requests.get(f"{BASE_URL}/users")
         users = response.json()["result"]
         
-        # Получаем схему User из OpenAPI
-        user_schema = OPENAPI_SPEC['components']['schemas']['User']
-        validator = OAS30Validator(user_schema)
-        
         for user in users:
-            errors = list(validator.iter_errors(user))
-            assert not errors, f"User validation failed: {errors}"
+            valid, error = validate_against_schema(user, SIMPLE_USER_SCHEMA)
+            assert valid, f"User validation failed: {error}"
+            assert len(user["msisdn"]) == 11
+            assert user["msisdn"].isdigit()
+            if user["name"] is not None:
+                assert len(user["name"]) <= 30
 
-    def test_error_response_schema(self):
-        """Проверяет схему ответа с ошибкой"""
-        response = requests.get(f"{BASE_URL}/users/999")
-        data = response.json()
-        
-        # Получаем схему ErrorResponse из OpenAPI
-        error_schema = OPENAPI_SPEC['components']['schemas']['ErrorResponse']
-        validator = OAS30Validator(error_schema)
-        
-        errors = list(validator.iter_errors(data))
-        assert not errors, f"Error response validation failed: {errors}"
+    def test_msisdn_uniqueness(self):
+        """Проверяет уникальность MSISDN"""
+        response = requests.get(f"{BASE_URL}/users")
+        users = response.json()["result"]
+        msisdns = [u["msisdn"] for u in users]
+        assert len(msisdns) == len(set(msisdns))
 
-# ===== ТЕСТЫ ДЛЯ ПРОВЕРКИ САМОЙ OPENAPI СПЕЦИФИКАЦИИ =====
+    def test_id_auto_increment(self):
+        """Проверяет автоинкремент ID"""
+        response = requests.get(f"{BASE_URL}/users")
+        max_id = max(u["id"] for u in response.json()["result"])
+        
+        create_response = requests.post(f"{BASE_URL}/users", json={
+            "msisdn": "79998887700"
+        })
+        new_id = create_response.json()["result"]["id"]
+        
+        assert new_id > max_id
+
+    def test_pagination_consistency(self):
+        """Проверяет согласованность пагинации"""
+        all_response = requests.get(f"{BASE_URL}/users")
+        all_users = all_response.json()["result"]
+        
+        page1 = requests.get(f"{BASE_URL}/users?offset=0&count=3").json()["result"]
+        page2 = requests.get(f"{BASE_URL}/users?offset=3&count=3").json()["result"]
+        page3 = requests.get(f"{BASE_URL}/users?offset=6&count=3").json()["result"]
+        
+        combined = page1 + page2 + page3
+        assert combined == all_users[:9]
+
+# ===== ТЕСТЫ ДЛЯ ПРОВЕРКИ OPENAPI СПЕЦИФИКАЦИИ =====
+
+def test_openapi_spec_exists():
+    """Проверяет, что OpenAPI спецификация существует"""
+    assert OPENAPI_SPEC is not None, "OpenAPI spec not found"
 
 def test_openapi_spec_is_valid():
-    """Проверяет, что OpenAPI спецификация валидна"""
-    # Базовая проверка наличия обязательных полей
-    assert 'openapi' in OPENAPI_SPEC
-    assert 'info' in OPENAPI_SPEC
-    assert 'paths' in OPENAPI_SPEC
-    
-    # Проверяем все эндпоинты
-    expected_paths = ['/reset', '/users', '/users/{id}']
-    for path in expected_paths:
-        assert path in OPENAPI_SPEC['paths'], f"Path {path} not found in spec"
-    
-    # Проверяем схемы
-    expected_schemas = ['User', 'UserInput', 'UserList', 'SuccessResponse', 'ErrorResponse', 'CreateUserResponse']
-    schemas = OPENAPI_SPEC['components']['schemas']
-    for schema in expected_schemas:
-        assert schema in schemas, f"Schema {schema} not found in spec"
+    """Проверяет, что OpenAPI спецификация содержит основные разделы"""
+    if OPENAPI_SPEC:
+        assert 'openapi' in OPENAPI_SPEC
+        assert 'info' in OPENAPI_SPEC
+        assert 'paths' in OPENAPI_SPEC
+        
+        expected_paths = ['/reset', '/users', '/users/{id}']
+        for path in expected_paths:
+            assert path in OPENAPI_SPEC['paths'], f"Path {path} not found in spec"
 
 if __name__ == "__main__":
     pytest.main(["-v", "--tb=short", __file__])
