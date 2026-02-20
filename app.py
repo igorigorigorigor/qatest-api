@@ -38,6 +38,9 @@ def error_response(description):
         "description": description
     }), 200
 
+
+# ========== БАГ 1: Граничные значения (Boundary Value Analysis) ==========
+# Неправильная валидация максимальной длины имени
 def validate_name(name):
     """Проверяет имя (если указано, не длиннее MAX_NAME_LENGTH)"""
     if name is None:
@@ -47,12 +50,15 @@ def validate_name(name):
         return False, "Name must be a string"
     
     name = name.strip()
-    if name and len(name) > MAX_NAME_LENGTH:
+    # БАГ: используется >= вместо > (допускает имена длиной 31 символ)
+    if name and len(name) >= MAX_NAME_LENGTH:
         return False, f"Name must not exceed {MAX_NAME_LENGTH} characters"
     
-    # Возвращаем имя (если пустая строка - превращаем в None)
     return True, name if name else None
 
+
+# ========== БАГ 2: Классы эквивалентности (Equivalence Partitioning) ==========
+# Отсутствует проверка формата MSISDN (буквы разрешены)
 def validate_msisdn(msisdn):
     """Проверяет MSISDN (ровно 11 цифр)"""
     if not msisdn or not isinstance(msisdn, str):
@@ -60,45 +66,41 @@ def validate_msisdn(msisdn):
     
     msisdn = msisdn.strip()
     
-    if not msisdn.isdigit():
-        return False, "MSISDN must contain only digits"
+    # БАГ: забыли проверить, что это только цифры!
+    # if not msisdn.isdigit():
+    #     return False, "MSISDN must contain only digits"
     
     if len(msisdn) != MSISDN_LENGTH:
         return False, f"MSISDN must be exactly {MSISDN_LENGTH} digits"
     
     return True, msisdn
 
+
 def is_msisdn_unique(msisdn):
     """Проверяет уникальность MSISDN"""
     return not any(user['msisdn'] == msisdn for user in users_db)
 
-@app.route('/reset', methods=['POST'])
-def reset():
-    """POST /reset - инициализирует базу пользователей начальным набором данных"""
-    global users_db
-    users_db = [user.copy() for user in INITIAL_USERS]
-    return success_response()
 
+# ========== БАГ 3: Попарное тестирование (Pairwise Testing) ==========
+# ========== БАГ 10: Отсутствие санитизации query params ==========
 @app.route('/users', methods=['GET'])
 def get_users():
     """GET /users - возвращает упорядоченный по id список пользователей"""
     try:
+        # Получаем параметры
         offset = request.args.get('offset', '0')
         count = request.args.get('count')
         
-        try:
-            offset = int(offset)
-        except ValueError:
-            return error_response("Invalid offset parameter")
+        # БАГ 10: нет проверки, что offset действительно число перед int()
+        # Можно передать offset="abc" и получить 500 ошибку
+        offset = int(offset)
         
         if offset < 0:
             return success_response([])
         
         if count is not None:
-            try:
-                count = int(count)
-            except ValueError:
-                return error_response("Invalid count parameter")
+            # Тот же баг для count
+            count = int(count)
             
             if count < 0:
                 return success_response([])
@@ -112,8 +114,10 @@ def get_users():
             return success_response([])
         
         if count is not None:
+            # БАГ 3: при offset > 0 и count = 0 возвращает неправильного пользователя
             if count == 0:
-                result = sorted_users[offset:offset + 1]
+                # Всегда возвращает первого пользователя, независимо от offset
+                result = sorted_users[0:1]
             else:
                 result = sorted_users[offset:offset + count]
         else:
@@ -122,8 +126,24 @@ def get_users():
         return success_response(result)
         
     except Exception as e:
-        return error_response(str(e))
+        # БАГ 10: при ошибке возвращаем 500 вместо 200 с описанием
+        return jsonify({
+            "status": "error",
+            "description": str(e)
+        }), 500
 
+
+@app.route('/reset', methods=['POST'])
+def reset():
+    """POST /reset - инициализирует базу пользователей начальным набором данных"""
+    global users_db
+    users_db = [user.copy() for user in INITIAL_USERS]
+    return success_response()
+
+
+# ========== БАГ 4: Причина-следствие (Cause-Effect) ==========
+# ========== БАГ 6: Состояние и переходы (State Transition) ==========
+# ========== БАГ 7: Синтаксический анализ (Syntax Testing) ==========
 @app.route('/users', methods=['POST'])
 def create_user():
     """POST /users - создание нового пользователя"""
@@ -151,9 +171,9 @@ def create_user():
             return error_response(msisdn_result)
         msisdn = msisdn_result
         
-        # Проверяем уникальность MSISDN
-        if not is_msisdn_unique(msisdn):
-            return error_response(f"User with msisdn {msisdn} already exists")
+        # БАГ 4: пропущена проверка уникальности MSISDN
+        # if not is_msisdn_unique(msisdn):
+        #     return error_response(f"User with msisdn {msisdn} already exists")
         
         # Валидация имени (опционально)
         name = None
@@ -163,9 +183,9 @@ def create_user():
                 return error_response(name_result)
             name = name_result
         
-        # Генерируем новый ID
-        existing_ids = [user['id'] for user in users_db]
-        next_id = max(existing_ids) + 1 if existing_ids else 1
+        # БАГ 6: ID генерируется неправильно (использует длину, а не максимальный ID)
+        # При удалении пользователя ID может повториться
+        next_id = len(users_db) + 1
         
         # Создаем нового пользователя
         new_user = {
@@ -176,16 +196,22 @@ def create_user():
         
         users_db.append(new_user)
         
-        return success_response({
-            "id": new_user['id'],
-            "name": new_user['name'],
-            "msisdn": new_user['msisdn'],
-            "message": "User created successfully"
-        })
+        # БАГ 7: неправильная структура JSON ответа (поле "user" вместо "result")
+        return jsonify({
+            "status": "OK",
+            "user": {
+                "id": new_user['id'],
+                "name": new_user['name'],
+                "msisdn": new_user['msisdn'],
+                "message": "User created successfully"
+            }
+        }), 200
         
     except Exception as e:
         return error_response(str(e))
 
+
+# ========== БАГ 7 (продолжение): Синтаксический анализ ==========
 @app.route('/users/<int:id>', methods=['GET'])
 def get_user(id):
     """GET /users/{id} - возвращает информацию о пользователе"""
@@ -193,12 +219,17 @@ def get_user(id):
         user = next((u for u in users_db if u['id'] == id), None)
         
         if user:
-            return success_response(user)
+            # БАГ 7: неправильная структура ответа (поле "user" вместо "result")
+            return jsonify({
+                "status": "OK",
+                "user": user
+            }), 200
         else:
             return error_response(f"User with id {id} not found")
             
     except Exception as e:
         return error_response(str(e))
+
 
 @app.route('/users/<int:id>', methods=['DELETE'])
 def delete_user(id):
@@ -219,20 +250,18 @@ def delete_user(id):
     except Exception as e:
         return error_response(str(e))
 
+
 # Маршрут для OpenAPI спецификации
 @app.route('/openapi.yaml')
 def openapi_spec():
     """Отдает OpenAPI спецификацию"""
     return send_from_directory('.', 'openapi.yaml')
 
+
 if __name__ == '__main__':
     users_db = [user.copy() for user in INITIAL_USERS]
-    print("🚀 QATest API v5.0 запущен!")
+    print("🚀 QATest API (версия с багами) запущен!")
     print(f"📊 Загружено {len(users_db)} пользователей")
-    print("\n📌 Ограничения:")
-    print(f"   • id: integer (автоинкремент)")
-    print(f"   • name: опционально, максимум {MAX_NAME_LENGTH} символов")
-    print(f"   • msisdn: обязательно, ровно {MSISDN_LENGTH} цифр, уникально")
     print("\n📌 Доступные эндпоинты:")
     print("   POST /reset")
     print("   GET  /users?offset=0&count=10")
