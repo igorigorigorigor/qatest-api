@@ -84,20 +84,20 @@ def is_msisdn_unique(msisdn):
 # ========== КОРНЕВОЙ ЭНДПОИНТ (описание сервиса) ==========
 @app.route("/", methods=["GET"])
 def home():
-    """GET / - возвращает информацию о сервисе"""
+    """GET / - returns service information and available endpoints"""
     return success_response(
         {
             "name": "QATest API",
             "version": "2.0.0",
-            "description": "HTTP API для работы со списками пользователей",
+            "description": "HTTP API for user management",
             "endpoints": {
-                "GET /": "Информация о сервисе",
-                "POST /reset": "Сброс базы данных к начальному состоянию",
-                "GET /users": "Получение списка пользователей с пагинацией (параметры: offset, count)",
-                "POST /users": "Создание нового пользователя (JSON: msisdn, name - опционально)",
-                "GET /users/{id}": "Получение пользователя по ID",
-                "DELETE /users/{id}": "Удаление пользователя по ID",
-                "GET /openapi.yaml": "OpenAPI спецификация",
+                "GET /": "Service information",
+                "POST /reset": "Reset database to initial state",
+                "GET /users": "Get paginated list of users (parameters: offset, count)",
+                "POST /users": "Create new user (JSON: msisdn, name - optional)",
+                "GET /users/{id}": "Get user by ID",
+                "DELETE /users/{id}": "Delete user by ID",
+                "GET /openapi.yaml": "OpenAPI specification",
             },
             "documentation": "/openapi.yaml",
             "users_count": len(users_db),
