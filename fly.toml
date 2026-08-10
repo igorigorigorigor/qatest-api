@@ -1,0 +1,24 @@
+# fly.toml app configuration file generated for qatest-api-kk-09sd31 on 2026-08-10T12:46:26Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'qatest-api-kk-09sd31'
+primary_region = 'ams'
+
+[deploy]
+  strategy = 'immediate'
+
+[http_service]
+  auto_start_machines = true
+  auto_stop_machines = true
+  force_https = true
+  internal_port = 8080
+  min_machines_running = 0
+  processes = ['app']
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory = '1gb'
+  memory_mb = 256
