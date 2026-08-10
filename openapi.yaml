@@ -8,12 +8,6 @@ info:
   license:
     name: MIT
 
-servers:
-  - url: https://qatest-api.onrender.com
-    description: Production server
-  - url: http://localhost:5000
-    description: Local development server
-
 tags:
   - name: Users
     description: Операции с пользователями
